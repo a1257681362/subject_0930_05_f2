@@ -37,4 +37,41 @@
 
 定时任务 `StartupBatchJob`：启动即执行、之后每 6 小时巡检，幂等确保"植物工厂种植批次台账起步"批次（固定编号 `PFB-STARTUP-0001`，`startup_flag=Y`）存在且仅一条。重启/多次触发只回查跳过，不多写记录；任务线程无登录主体时操作者兜底为系统(0)。
 
+## 植物光配方
+
+按品种+生长阶段配置光谱比例（红/蓝/远红，合计 100）、亮度（PPFD）与光时段，定时任务按棚区整点下发到灯控设备（版本 `pf-light-1`）。
+
+业务表：
+
+- `t_pf_light_recipe` 配方版本主表：同一 `recipe_code` 逐版递增，任一时间至多一个 PUBLISHED
+- `t_pf_light_recipe_stage` 阶段明细：`day_from <= 播种后天数 < day_to`（`day_to` 空=开放段）
+- `t_pf_light_device` 灯控设备（隶属分区）
+- `t_pf_light_dispatch` 整点下发单（历史快照）：参数全量冗余，每棚区每生效整点至多一单，仅参数切换时建单
+- `t_pf_light_dispatch_device` 设备执行项（重试队列）：FAILED/RETRYING 到点重发，超 12 次置 DEAD
+- `t_pf_light_override` 人工临时调整：**结束时间与审批人必填**，窗口外自动失效
+
+统一时间口径（`LightTimeRules`，全部左闭右开 `[start, end)`，由 `LightTimeRulesTest` 锁定）：
+
+- 阶段归属：播种当天为第 0 天，临界日归下一阶段
+- 整点生效：生效时刻 = 不小于当前时间的最近整点（10:00:00.000 当拍生效，10:00:00.001 归 11:00）
+- 光时段：`light_on <= t < light_off` 开灯，支持跨夜（22:00–06:00）
+- 调整窗口：`start_time <= t < end_time`，到点自动失效；窗口内不含整点的调整直接拒绝（永不生效）
+
+核心规则：
+
+- **新版本只影响未开始阶段**：批次当前阶段已有下发记录即钉住其配方版本，参数从不可变阶段表重读；未开始阶段才取当前 PUBLISHED 版本
+- **历史执行保留快照**：下发单冗余全部参数，配方后续变更不影响已生成记录；生效前的 PENDING 单允许随最新发布/调整刷新，生效后留痕不可改
+- **人工临时调整**：覆盖参数位但保留配方钉版，结束/撤销后自动回到原配方版本；同棚区同时只允许一条生效中调整
+- 定时任务 `LightDispatchJob` 每 5 分钟整（`0 0/5 * * * ?`）执行：建单（幂等）→ 到点下发/重试 → 过期调整归置；`effective_at <= now` 才下发，切换只在整点生效
+
+接口：
+
+- 配方：`POST/GET /api/pf/light-recipes`、`GET /{id}/stages`、`POST /{id}/publish`（旧发布版自动归档）
+- 临时调整：`POST/GET /api/pf/light-overrides`、`POST /{id}/revoke`
+- 下发：`GET /api/pf/light-dispatches`、`GET /{id}/devices`、`GET /retry-queue`、`POST /run`（手动触发一拍）
+
+种子数据：V001 奶油生菜两阶段配方（育苗 0–14 天 150PPFD / 生长 14 天起 220PPFD，已发布 v1）；A 区 LA01/LA02、B 区 LB01 正常，LB02 故障（演示重试队列）。设备下发由 `LightDeviceGateway` 模拟（非 ACTIVE 即失败），接真实灯控协议时替换 `SimulatedLightDeviceGateway`。
+
+注意：低熵环境（容器/虚拟机）下 `/dev/random` 会阻塞会话 ID 生成导致请求挂起，`mvn spring-boot:run` 已在 pom 中配置 `-Djava.security.egd=file:/dev/./urandom` 规避；生产部署请按环境自行评估。
+
 

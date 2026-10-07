@@ -72,6 +72,13 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- 低熵环境（容器/虚拟机）下 /dev/random 会阻塞会话ID生成，导致请求挂起；
+                         开发期改用 urandom。生产部署请按环境自行评估 -->
+                    <systemPropertyVariables>
+                        <java.security.egd>file:/dev/./urandom</java.security.egd>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
         </plugins>
     </build>

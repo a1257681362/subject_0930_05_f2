@@ -1,0 +1,15 @@
+spring:
+  quartz:
+    # 测试中保留 Scheduler Bean（控制器依赖），但不自动启动——避免真实整点/启动触发器干扰用例，
+    # 下发与重试都通过可注入时钟的服务方法直接驱动
+    auto-startup: false
+  datasource:
+    # 不设 DB_CLOSE_DELAY=-1：连接池关闭时内存库随之删除，配合用例独立品种保证互不污染
+    url: jdbc:h2:mem:light-test
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
